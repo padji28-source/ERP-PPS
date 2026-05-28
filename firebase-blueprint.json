@@ -1,0 +1,103 @@
+{
+  "entities": {
+    "WarehouseItem": {
+      "title": "WarehouseItem",
+      "description": "Item stored in the warehouse",
+      "type": "object",
+      "properties": {
+        "kode": { "type": "string" },
+        "name": { "type": "string" },
+        "jenis": { "type": "string" },
+        "satuan": { "type": "string" },
+        "isiKemasan": { "type": "string" },
+        "hargaPartai": { "type": "number" },
+        "hargaEcer": { "type": "number" }
+      },
+      "required": ["name"]
+    },
+    "BOMItem": {
+      "title": "BOMItem",
+      "description": "Bill of Materials Item",
+      "type": "object",
+      "properties": {
+        "material": { "type": "string" },
+        "qty": { "type": "string" },
+        "unit": { "type": "string" }
+      }
+    },
+    "MasterProduct": {
+      "title": "MasterProduct",
+      "description": "Product configuration and BOM",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "bom": {
+          "type": "array",
+          "items": { "$ref": "#/entities/BOMItem" }
+        }
+      },
+      "required": ["id", "name"]
+    },
+    "PurchaseOrder": {
+      "title": "PurchaseOrder",
+      "description": "Purchase Order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "clientName": { "type": "string" },
+        "deadline": { "type": "string" },
+        "note": { "type": "string" },
+        "items": { "type": "array" },
+        "status": { "type": "string" },
+        "createdDate": { "type": "string" }
+      },
+      "required": ["id"]
+    },
+    "SalesOrder": {
+      "title": "SalesOrder",
+      "description": "Sales Order / Production Order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "client": { "type": "string" },
+        "poNumber": { "type": "string" },
+        "product": { "type": "string" },
+        "qty": { "type": "number" },
+        "stage": { "type": "string" },
+        "vendor": { "type": "string" },
+        "deadline": { "type": "string" },
+        "status": { "type": "string" },
+        "note": { "type": "string" },
+        "qtyKirim": { "type": "string" },
+        "tglKirim": { "type": "string" },
+        "qtyMasuk": { "type": "string" },
+        "target": { "type": "string" },
+        "aktual": { "type": "string" },
+        "selisih": { "type": "string" },
+        "confirmQty": { "type": "number" },
+        "bom": { "type": "array" }
+      },
+      "required": ["id"]
+    }
+  },
+  "firestore": {
+    "warehouse_items": {
+      "schema": "#/entities/WarehouseItem",
+      "description": "Items in the warehouse"
+    },
+    "master_products": {
+      "schema": "#/entities/MasterProduct",
+      "description": "Master products"
+    },
+    "purchase_orders": {
+      "schema": "#/entities/PurchaseOrder",
+      "description": "Purchase orders"
+    },
+    "sales_orders": {
+      "schema": "#/entities/SalesOrder",
+      "description": "Sales orders"
+    }
+  }
+}
