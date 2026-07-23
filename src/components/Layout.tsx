@@ -6,9 +6,25 @@ export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { currentUser, logout } = useAuth();
+
+  useEffect(() => {
+    if (!currentUser) {
+      navigate('/login', { replace: true });
+      return;
+    }
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+    if (isMobile) {
+      navigate('/mobile', { replace: true });
+    }
+  }, [currentUser, navigate]);
+
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [openAccordion, setOpenAccordion] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+
+  if (!currentUser) {
+    return null;
+  }
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -327,15 +343,6 @@ export default function Layout() {
             
             {/* Right Tools */}
             <div className="flex items-center gap-4 relative">
-                <NavLink 
-                  to="/mobile" 
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 font-bold rounded-full text-xs transition-colors border border-amber-500/20"
-                  title="Tampilan Aplikasi HP/Mobile"
-                >
-                    <span className="material-symbols-outlined text-[16px]">smartphone</span>
-                    <span>Versi Mobile</span>
-                </NavLink>
-
                 <button className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-600 hover:text-gray-900 shadow-sm transition-colors">
                     <span className="material-symbols-outlined text-[20px]">notifications_none</span>
                 </button>

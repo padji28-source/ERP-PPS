@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth, PREDEFINED_USERS, UserRole } from '../context/AuthContext';
 import { 
@@ -12,13 +12,14 @@ import {
   Sparkles, 
   ArrowRight,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Clock
 } from 'lucide-react';
 
 export default function Login() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { login, quickLogin, currentUser } = useAuth();
+  const { login, quickLogin, currentUser, inactivityMessage, clearInactivityMessage } = useAuth();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -26,11 +27,29 @@ export default function Login() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const redirectUrl = searchParams.get('redirect') || '/portal';
+  const getDeviceTarget = () => {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+    return isMobile ? '/mobile' : '/erp';
+  };
+
+  const getDestination = () => {
+    const redirectParam = searchParams.get('redirect');
+    if (redirectParam && redirectParam !== '/portal' && redirectParam !== '/') {
+      return redirectParam;
+    }
+    return getDeviceTarget();
+  };
+
+  useEffect(() => {
+    if (currentUser) {
+      navigate(getDestination(), { replace: true });
+    }
+  }, [currentUser, navigate]);
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    if (inactivityMessage) clearInactivityMessage();
 
     if (!username || !password) {
       setErrorMessage('Harap isi username dan password.');
@@ -42,7 +61,7 @@ export default function Login() {
       const res = login(username, password);
       setIsLoading(false);
       if (res.success) {
-        navigate(redirectUrl, { replace: true });
+        navigate(getDestination(), { replace: true });
       } else {
         setErrorMessage(res.message || 'Username atau password salah.');
       }
@@ -57,7 +76,7 @@ export default function Login() {
 
   const handleInstantLogin = (user: typeof PREDEFINED_USERS[0]) => {
     quickLogin(user.username);
-    navigate(redirectUrl, { replace: true });
+    navigate(getDestination(), { replace: true });
   };
 
   const [showHelper, setShowHelper] = useState(false);
@@ -83,6 +102,21 @@ export default function Login() {
           <h2 className="text-xl font-bold text-slate-900">Selamat Datang Kembali</h2>
           <p className="text-xs text-slate-500 mt-1">Silakan masuk menggunakan akun role Anda untuk mengakses sistem.</p>
         </div>
+
+        {inactivityMessage && (
+          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between gap-3 text-amber-800 text-xs font-semibold animate-in fade-in">
+            <div className="flex items-center gap-2.5">
+              <Clock className="h-5 w-5 text-amber-600 shrink-0" />
+              <span>{inactivityMessage}</span>
+            </div>
+            <button 
+              onClick={clearInactivityMessage}
+              className="text-amber-600 hover:text-amber-800 text-xs font-bold underline shrink-0"
+            >
+              Tutup
+            </button>
+          </div>
+        )}
 
         {errorMessage && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center gap-3 text-red-600 text-xs font-semibold animate-in fade-in">

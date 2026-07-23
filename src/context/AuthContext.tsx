@@ -66,6 +66,8 @@ interface AuthContextType {
   login: (username: string, password: string) => { success: boolean; message?: string; user?: UserAccount };
   logout: () => void;
   quickLogin: (username: string) => void;
+  inactivityMessage: string | null;
+  clearInactivityMessage: () => void;
   // Permissions
   canResetDatabase: boolean;
   canUnlockBOM: boolean;
@@ -79,32 +81,71 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const INACTIVITY_TIMEOUT = 10 * 60 * 1000; // 10 minutes in ms
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
-    const saved = localStorage.getItem('parahita_user');
+    // Clear legacy localStorage to ensure fresh session rules
+    localStorage.removeItem('parahita_user');
+
+    const saved = sessionStorage.getItem('parahita_user');
     if (saved) {
       try {
         return JSON.parse(saved);
       } catch (e) {
-        // default to Admin
+        // invalid
       }
     }
-    // Default logged in user is Admin PPS for convenience
-    return {
-      username: 'adminpps',
-      role: 'Admin',
-      name: 'Admin PPS',
-      email: 'admin.pps@parahita.com',
-      avatar: 'https://ui-avatars.com/api/?name=Admin+PPS&background=1e293b&color=ffffff'
-    };
+    return null; // Direct to login on fresh open
   });
+
+  const [inactivityMessage, setInactivityMessage] = useState<string | null>(() => {
+    const msg = sessionStorage.getItem('inactivity_logout_msg');
+    if (msg) {
+      sessionStorage.removeItem('inactivity_logout_msg');
+      return msg;
+    }
+    return null;
+  });
+
+  const clearInactivityMessage = () => {
+    setInactivityMessage(null);
+    sessionStorage.removeItem('inactivity_logout_msg');
+  };
 
   useEffect(() => {
     if (currentUser) {
-      localStorage.setItem('parahita_user', JSON.stringify(currentUser));
+      sessionStorage.setItem('parahita_user', JSON.stringify(currentUser));
     } else {
-      localStorage.removeItem('parahita_user');
+      sessionStorage.removeItem('parahita_user');
     }
+  }, [currentUser]);
+
+  // 10-Minute Inactivity Auto-Logout
+  useEffect(() => {
+    if (!currentUser) return;
+
+    let timer: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const msg = 'Sesi Anda telah berakhir karena tidak ada aktivitas selama 10 menit. Silakan login kembali.';
+        sessionStorage.setItem('inactivity_logout_msg', msg);
+        setInactivityMessage(msg);
+        setCurrentUser(null);
+      }, INACTIVITY_TIMEOUT);
+    };
+
+    const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+    events.forEach(evt => window.addEventListener(evt, resetTimer, { passive: true }));
+
+    resetTimer();
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      events.forEach(evt => window.removeEventListener(evt, resetTimer));
+    };
   }, [currentUser]);
 
   const login = (username: string, password: string) => {
@@ -120,6 +161,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: found.email,
         avatar: found.avatar
       };
+      clearInactivityMessage();
       setCurrentUser(userAcc);
       return { success: true, user: userAcc };
     }
@@ -137,11 +179,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: found.email,
         avatar: found.avatar
       };
+      clearInactivityMessage();
       setCurrentUser(userAcc);
     }
   };
 
   const logout = () => {
+    sessionStorage.removeItem('parahita_user');
     setCurrentUser(null);
   };
 
@@ -182,6 +226,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       login, 
       logout, 
       quickLogin,
+      inactivityMessage,
+      clearInactivityMessage,
       canResetDatabase,
       canUnlockBOM,
       canVerifyWIPStage,

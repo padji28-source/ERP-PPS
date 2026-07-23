@@ -9,6 +9,7 @@ import {
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, getDocs, doc, updateDoc, setDoc, writeBatch, addDoc, serverTimestamp, query, orderBy, limit } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { resetDatabaseData } from '../services/resetService';
 
 const APP_BRAND = {
@@ -38,6 +39,19 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function MobileApp() {
   const navigate = useNavigate();
+  const { currentUser } = useAuth();
+
+  useEffect(() => {
+    if (!currentUser) {
+      navigate('/login', { replace: true });
+      return;
+    }
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+    if (!isMobile) {
+      navigate('/erp', { replace: true });
+    }
+  }, [currentUser, navigate]);
+
   const [salesOrders, setSalesOrders] = useState<any[]>([]);
   const [productionJobs, setProductionJobs] = useState<any[]>([]);
   const [materials, setMaterials] = useState<any[]>([]);

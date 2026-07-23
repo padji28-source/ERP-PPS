@@ -28,7 +28,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Portal />} />
-          <Route path="/portal" element={<Portal forceShowSelect={true} />} />
+          <Route path="/portal" element={<Portal />} />
           <Route path="/login" element={<Login />} />
           <Route path="/mobile" element={<MobileApp />} />
           
