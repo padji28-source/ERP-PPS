@@ -10,7 +10,6 @@ import Dashboard from './pages/Dashboard';
 import InputSO from './pages/InputSO';
 import InputPO from './pages/InputPO';
 import WIPKanban from './pages/WIPKanban';
-import WMSInventory from './pages/WMSInventory';
 import DataGudang from './pages/DataGudang';
 import BOMCosting from './pages/BOMCosting';
 import MasterProduct from './pages/MasterProduct';
@@ -40,7 +39,6 @@ export default function App() {
             <Route path="input-po" element={<InputPO />} />
             <Route path="input-so" element={<InputSO />} />
             <Route path="kanban" element={<WIPKanban />} />
-            <Route path="inventory" element={<WMSInventory />} />
             <Route path="gudang" element={<DataGudang />} />
             <Route path="reports" element={<Reports />} />
             <Route path="setup" element={<Setup />} />

@@ -236,15 +236,6 @@ export default function Layout() {
                 <span className="text-[14px]">Menu BOM & Costing</span>
               </NavLink>
 
-              <NavLink
-                to="/erp/inventory"
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group ${
-                  location.pathname === '/erp/inventory' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] text-gray-900 font-bold' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-                }`}
-              >
-                <span className={`material-symbols-outlined text-[20px] ${location.pathname === '/erp/inventory' ? 'text-gray-900' : 'text-gray-400'}`}>inventory_2</span>
-                <span className="text-[14px]">WMS Inventory</span>
-              </NavLink>
 
               <NavLink
                 to="/erp/master-product"
