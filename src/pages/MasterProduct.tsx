@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, doc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
+import { useAuth } from '../context/AuthContext';
 
 interface BOMItem {
   material: string;
@@ -16,6 +17,7 @@ interface Product {
 }
 
 export default function MasterProduct() {
+  const { canEditMasterProduct } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [dataGudang, setDataGudang] = useState<any[]>([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -69,12 +71,15 @@ export default function MasterProduct() {
     }
   };
 
-  const deleteProduct = async (id: string) => {
-    if (!window.confirm("Yakin ingin menghapus produk ini?")) return;
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+
+  const deleteProduct = async () => {
+    if (!deleteId) return;
     try {
-      await deleteDoc(doc(db, 'master_products', id));
-      const filtered = products.filter(p => p.id !== id);
+      await deleteDoc(doc(db, 'master_products', deleteId));
+      const filtered = products.filter(p => p.id !== deleteId);
       setProducts(filtered);
+      setDeleteId(null);
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, 'master_products');
     }
@@ -87,9 +92,11 @@ export default function MasterProduct() {
           <h2 className="text-2xl lg:text-3xl font-extrabold text-[#1E293B] tracking-tight">Master Product</h2>
           <p className="text-[#64748B] mt-1.5 text-sm font-medium">Kelola data produk jadi dan Bill of Materials (BOM)</p>
         </div>
-        <button onClick={() => setShowAdd(true)} className="bg-primary text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-primary/90 transition-colors shadow-sm">
-          <span className="material-symbols-outlined text-[20px]">add</span> Tambah Product
-        </button>
+        {canEditMasterProduct && (
+          <button onClick={() => setShowAdd(true)} className="bg-primary text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-primary/90 transition-colors shadow-sm">
+            <span className="material-symbols-outlined text-[20px]">add</span> Tambah Product
+          </button>
+        )}
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 lg:px-8 py-6 custom-scrollbar">
@@ -101,14 +108,16 @@ export default function MasterProduct() {
                   <h3 className="font-bold text-lg text-[#1E293B] line-clamp-1">{p.name}</h3>
                   <span className="text-xs font-bold text-[#64748B] uppercase tracking-widest">{p.id} • {p.category}</span>
                 </div>
-                <div className="flex gap-1 shrink-0">
-                  <button onClick={() => { setFormData(p); setShowAdd(true); }} className="text-blue-500 hover:bg-blue-50 p-2 rounded-xl transition-colors">
-                    <span className="material-symbols-outlined text-xl">edit</span>
-                  </button>
-                  <button onClick={() => deleteProduct(p.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-xl transition-colors">
-                    <span className="material-symbols-outlined text-xl">delete</span>
-                  </button>
-                </div>
+                {canEditMasterProduct && (
+                  <div className="flex gap-1 shrink-0">
+                    <button onClick={() => { setFormData(p); setShowAdd(true); }} className="text-blue-500 hover:bg-blue-50 p-2 rounded-xl transition-colors">
+                      <span className="material-symbols-outlined text-xl">edit</span>
+                    </button>
+                    <button onClick={() => setDeleteId(p.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-xl transition-colors">
+                      <span className="material-symbols-outlined text-xl">delete</span>
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="mt-3 border-t border-[#F1F5F9] pt-4">
                 <h4 className="text-[11px] font-black text-[#94A3B8] uppercase tracking-widest mb-3 flex items-center gap-1.5">
@@ -228,6 +237,32 @@ export default function MasterProduct() {
                 className="px-5 py-2.5 bg-[#1E293B] text-white font-bold rounded-xl hover:bg-black transition-colors disabled:opacity-50"
               >
                 Simpan Product
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200">
+            <h3 className="text-xl font-bold text-[#1E293B] mb-2">Konfirmasi Hapus</h3>
+            <p className="text-[#64748B] mb-6 text-sm">
+              Yakin ingin menghapus produk <span className="font-bold text-[#1E293B]">{deleteId}</span>? Tindakan ini tidak dapat dibatalkan.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => setDeleteId(null)}
+                className="px-4 py-2 bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#64748B] font-bold rounded-xl transition-colors text-sm"
+              >
+                Batal
+              </button>
+              <button 
+                onClick={deleteProduct}
+                className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white font-bold rounded-xl transition-colors text-sm"
+              >
+                Hapus
               </button>
             </div>
           </div>

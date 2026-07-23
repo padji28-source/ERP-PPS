@@ -1,8 +1,33 @@
 import { useState } from 'react';
+import { resetDatabaseData } from '../services/resetService';
+import { useAuth } from '../context/AuthContext';
 
 export default function Setup() {
+  const { canResetDatabase, currentUser } = useAuth();
   const [activeTab, setActiveTab] = useState('Profile');
   const [isConfirmingReset, setIsConfirmingReset] = useState(false);
+  const [isResettingDb, setIsResettingDb] = useState(false);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
+
+  const handleResetDb = async () => {
+    if (!canResetDatabase) {
+      setResetMessage('Akses ditolak: Hanya role Direktur / Owner yang diizinkan mereset database.');
+      return;
+    }
+    setIsResettingDb(true);
+    setResetMessage(null);
+    const result = await resetDatabaseData();
+    setIsResettingDb(false);
+    setIsConfirmingReset(false);
+    if (result.success) {
+      setResetMessage('Database berhasil di-reset ke data awal!');
+      setTimeout(() => {
+        window.location.reload();
+      }, 1200);
+    } else {
+      setResetMessage(result.message);
+    }
+  };
 
   return (
     <div className="flex-1 flex flex-col h-full bg-surface w-full max-w-[1600px] mx-auto overflow-hidden">
@@ -167,42 +192,92 @@ export default function Setup() {
             {activeTab === 'Data Management' && (
               <div className="bg-surface-container-lowest rounded-xl p-8 ghost-border ambient-shadow border border-error/20">
                 <h3 className="text-xl font-bold text-error mb-2">Danger Zone</h3>
-                <p className="text-sm text-outline mb-6">Permanently delete local data or reset the application state.</p>
+                <p className="text-sm text-outline mb-6">Reset data database Firestore atau bersihkan cache lokal aplikasi.</p>
                 
+                {resetMessage && (
+                  <div className="mb-6 p-4 bg-primary-container/20 text-primary border border-primary/30 rounded-xl text-sm font-semibold flex items-center gap-2">
+                    <span className="material-symbols-outlined">info</span>
+                    {resetMessage}
+                  </div>
+                )}
+
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 bg-error-container/10 border border-error/20 rounded-xl">
+                  {/* Reset Firestore Database */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between p-5 bg-error/5 border border-error/20 rounded-2xl gap-4">
                     <div className="flex-1">
-                      <h4 className="text-sm font-semibold text-error mb-1">Reset All Local Data</h4>
-                      <p className="text-xs text-outline max-w-md">This action will clear all local storage including Input SO data, kanban board state, stock checks, and inventory status. The page will reload.</p>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="material-symbols-outlined text-error text-xl">database</span>
+                        <h4 className="text-sm font-bold text-error">Reset Database Firestore (Database Clean & Seed)</h4>
+                      </div>
+                      <p className="text-xs text-outline max-w-lg leading-relaxed">
+                        Menghapus seluruh koleksi data di Firestore (Purchase Orders, Sales Orders, Master Product, Data Gudang, Notifikasi) dan mengisinya kembali dengan data sampel awal yang bersih & lengkap.
+                      </p>
                     </div>
-                    <div className="flex gap-2 ml-4">
+                    <div className="flex gap-2 shrink-0">
                       {isConfirmingReset ? (
                         <>
                           <button 
                             onClick={() => setIsConfirmingReset(false)}
-                            className="bg-surface-container hover:bg-surface-container-high text-on-surface font-medium px-4 py-2.5 rounded-xl transition-all shadow-sm shrink-0 whitespace-nowrap text-sm"
+                            disabled={isResettingDb}
+                            className="bg-surface-container hover:bg-surface-container-high text-on-surface font-medium px-4 py-2.5 rounded-xl transition-all shadow-sm whitespace-nowrap text-sm disabled:opacity-50"
                           >
-                            Cancel
+                            Batal
                           </button>
                           <button 
-                            onClick={() => {
-                              localStorage.clear();
-                              window.location.reload();
-                            }}
-                            className="bg-error hover:bg-error/90 text-on-error font-medium px-4 py-2.5 rounded-xl transition-all shadow-sm shrink-0 whitespace-nowrap text-sm"
+                            onClick={handleResetDb}
+                            disabled={isResettingDb}
+                            className="bg-error hover:bg-error/90 text-on-error font-bold px-5 py-2.5 rounded-xl transition-all shadow-sm whitespace-nowrap text-sm flex items-center gap-2 disabled:opacity-50"
                           >
-                            Yes, Reset Now
+                            {isResettingDb ? (
+                              <>
+                                <span className="material-symbols-outlined animate-spin text-base">refresh</span>
+                                Memproses Reset...
+                              </>
+                            ) : (
+                              'Ya, Reset Database'
+                            )}
                           </button>
                         </>
                       ) : (
                         <button 
-                          onClick={() => setIsConfirmingReset(true)}
-                          className="bg-error hover:bg-error/90 text-on-error font-medium px-6 py-2.5 rounded-xl transition-all shadow-sm shrink-0 whitespace-nowrap text-sm"
+                          onClick={() => {
+                            if (!canResetDatabase) {
+                              setResetMessage('Fitur Reset Database hanya diizinkan untuk Direktur / Owner.');
+                              return;
+                            }
+                            setIsConfirmingReset(true);
+                          }}
+                          className={`font-bold px-6 py-2.5 rounded-xl transition-all shadow-sm whitespace-nowrap text-sm flex items-center gap-2 ${
+                            canResetDatabase 
+                              ? 'bg-error hover:bg-error/90 text-on-error' 
+                              : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                          }`}
+                          title={canResetDatabase ? 'Reset Database' : 'Khusus Direktur / Owner'}
                         >
-                          Reset App Data
+                          <span className="material-symbols-outlined text-base">{canResetDatabase ? 'delete_forever' : 'lock'}</span>
+                          {canResetDatabase ? 'Reset Database' : 'Reset Database (Khusus Direktur)'}
                         </button>
                       )}
                     </div>
+                  </div>
+
+                  {/* Reset Local Storage */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between p-5 bg-surface-container-low border border-outline-variant/30 rounded-2xl gap-4">
+                    <div className="flex-1">
+                      <h4 className="text-sm font-semibold text-on-surface mb-1">Reset Cache & Local Storage</h4>
+                      <p className="text-xs text-outline max-w-lg">
+                        Membersihkan cache lokal browser seperti data temporary form, filter terakhir, dan status halaman.
+                      </p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        localStorage.clear();
+                        window.location.reload();
+                      }}
+                      className="bg-surface-container hover:bg-surface-container-high text-on-surface font-medium px-5 py-2.5 rounded-xl transition-all text-sm shrink-0 whitespace-nowrap"
+                    >
+                      Bersihkan Local Storage
+                    </button>
                   </div>
                 </div>
               </div>

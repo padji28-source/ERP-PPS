@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, writeBatch, setDoc } from 'firebase/firestore';
+import { useAuth } from '../context/AuthContext';
 
 export default function BOMCosting() {
+  const { canUnlockBOM, currentUser } = useAuth();
   const [selectedPO, setSelectedPO] = useState('');
   const [poList, setPoList] = useState<any[]>([]);
   const [masterProducts, setMasterProducts] = useState<any[]>([]);
@@ -30,8 +32,8 @@ export default function BOMCosting() {
             });
           }
           pList.push({
-            id: doc.id,
             ...data,
+            id: doc.id,
             totalQty: tQty,
             title: data.items && data.items.length > 0 ? data.items[0].productName : 'No Product'
           });
@@ -44,7 +46,7 @@ export default function BOMCosting() {
         const bomMap: Record<string, any[]> = {};
         mpSnapshot.forEach(doc => {
           const data = doc.data();
-          mList.push({ id: doc.id, ...data });
+          mList.push({ ...data, id: doc.id });
           if (data.name && data.bom) {
             bomMap[data.name] = data.bom;
           }
@@ -164,29 +166,27 @@ export default function BOMCosting() {
   const isBOMLocked = currentMasterProduct?.bomLocked || false;
 
   const handleUnlockBOM = async () => {
+    if (!canUnlockBOM) {
+      alert('Akses Ditolak: Hanya Direktur / Owner yang memiliki wewenang untuk meng-unlock Menu BOM & Costing.');
+      return;
+    }
     if (!currentMasterProduct) return;
-    if (!window.confirm("Buka kunci BOM? (Simulasi Akses Owner)")) return;
     
     try {
-      const { updateDoc, doc } = await import('firebase/firestore');
       await updateDoc(doc(db, 'master_products', currentMasterProduct.id), {
         bomLocked: false
       });
       setMasterProducts(masterProducts.map(m => m.id === currentMasterProduct.id ? { ...m, bomLocked: false } : m));
     } catch (e) {
       console.error(e);
-      alert("Gagal membuka kunci");
     }
   };
 
   const handleSaveBOM = async () => {
     if (!currentProductName || !currentPO) return;
     
-    if (!window.confirm("Simpan dan kunci cost sheet ini? Setelah dikunci, BOM hanya bisa diubah oleh Owner.")) return;
-
     const mp = masterProducts.find(m => m.name === currentProductName);
     try {
-      const { writeBatch } = await import('firebase/firestore');
       const batch = writeBatch(db);
 
       if (mp) {
@@ -196,7 +196,6 @@ export default function BOMCosting() {
         });
         setMasterProducts(masterProducts.map(m => m.id === mp.id ? { ...m, bomLocked: true } : m));
       } else {
-        const { setDoc } = await import('firebase/firestore');
         const newDocRef = doc(collection(db, 'master_products'));
         batch.set(newDocRef, {
           name: currentProductName,
@@ -214,7 +213,8 @@ export default function BOMCosting() {
       }
 
       // Save costing config to PO
-      const poRef = doc(db, 'purchase_orders', currentPO.id);
+      const docId = currentPO.id.replace(/\//g, '-');
+      const poRef = doc(db, 'purchase_orders', docId);
       batch.update(poRef, {
         costing: {
           overhead: Number(overhead),
@@ -233,8 +233,6 @@ export default function BOMCosting() {
           ? { ...p, costing: { overhead: Number(overhead), upah: Number(upah), margin: Number(margin), hppPerPcs, suggestedSellingPrice } }
           : p
       ));
-
-      alert('BOM Costing berhasil disimpan & di-update ke Master Product dan PO!');
     } catch (e) {
       handleFirestoreError(e, mp ? OperationType.UPDATE : OperationType.CREATE, 'master_products');
     }
@@ -487,9 +485,17 @@ export default function BOMCosting() {
                     <span className="material-symbols-outlined text-[18px]">lock</span>
                     BOM Terkunci
                  </div>
-                 <button onClick={handleUnlockBOM} className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-bold py-2.5 px-6 rounded-lg text-[14px] flex items-center gap-2 transition-colors">
-                    <span className="material-symbols-outlined text-[18px]">lock_open</span>
-                    Unlock (Owner)
+                 <button 
+                   onClick={handleUnlockBOM} 
+                   className={`border font-bold py-2.5 px-6 rounded-lg text-[14px] flex items-center gap-2 transition-colors ${
+                     canUnlockBOM 
+                       ? 'bg-white border-gray-300 hover:bg-gray-50 text-gray-700' 
+                       : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                   }`}
+                   title={canUnlockBOM ? 'Unlock BOM & Costing' : 'Khusus Direktur / Owner'}
+                 >
+                    <span className="material-symbols-outlined text-[18px]">{canUnlockBOM ? 'lock_open' : 'lock'}</span>
+                    {canUnlockBOM ? 'Unlock (Owner)' : 'Unlock (Khusus Direktur)'}
                  </button>
                </>
             ) : (

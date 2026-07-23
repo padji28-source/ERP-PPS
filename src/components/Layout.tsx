@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 export default function Layout() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { currentUser, logout } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [openAccordion, setOpenAccordion] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -18,6 +21,16 @@ export default function Layout() {
   const toggleAccordion = (name: string) => {
     setOpenAccordion(prev => prev === name ? null : name);
   };
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  const userName = currentUser?.name || 'Admin PPS';
+  const userRole = currentUser?.role || 'Admin';
+  const userEmail = currentUser?.email || 'admin.pps@parahita.com';
+  const userAvatar = currentUser?.avatar || 'https://ui-avatars.com/api/?name=Admin+PPS&background=1e293b&color=ffffff';
 
   return (
     <div className="bg-[#F6F8FB] text-[#1E293B] flex h-screen overflow-hidden font-sans selection:bg-rose-100 selection:text-rose-900">
@@ -36,18 +49,23 @@ export default function Layout() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-           <img alt="User Profile" src="https://ui-avatars.com/api/?name=Admin+User&background=fff4f2&color=f43f5e" className="w-8 h-8 rounded-full border border-gray-200" />
+           <img alt="User Profile" src={userAvatar} className="w-8 h-8 rounded-full border border-gray-200" />
         </div>
       </nav>
 
       {/* Desktop Side Navigation */}
       <aside className="hidden md:flex flex-col h-screen w-64 fixed left-0 top-0 z-50 bg-white border-r border-gray-200/60 py-6 space-y-6">
         {/* Brand / Header */}
-        <div className="px-8 flex items-center gap-2.5 mb-2">
+        <div className="px-8 flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2.5">
             <div className="text-rose-500 flex items-center justify-center">
                 <span className="material-symbols-outlined text-[28px]">local_fire_department</span>
             </div>
             <h1 className="text-xl font-bold text-gray-900 tracking-tight">Parahita</h1>
+          </div>
+          <span className="text-[10px] font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/20 px-2 py-0.5 rounded-full uppercase">
+            {userRole}
+          </span>
         </div>
 
         {/* Navigation Links */}
@@ -317,7 +335,16 @@ export default function Layout() {
             </div>
             
             {/* Right Tools */}
-            <div className="flex items-center gap-5 relative">
+            <div className="flex items-center gap-4 relative">
+                <NavLink 
+                  to="/mobile" 
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 font-bold rounded-full text-xs transition-colors border border-amber-500/20"
+                  title="Tampilan Aplikasi HP/Mobile"
+                >
+                    <span className="material-symbols-outlined text-[16px]">smartphone</span>
+                    <span>Versi Mobile</span>
+                </NavLink>
+
                 <button className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-600 hover:text-gray-900 shadow-sm transition-colors">
                     <span className="material-symbols-outlined text-[20px]">notifications_none</span>
                 </button>
@@ -325,34 +352,39 @@ export default function Layout() {
                   className="flex items-center gap-3 cursor-pointer group" 
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
                 >
-                    <img src="https://ui-avatars.com/api/?name=Admin+User&background=fff4f2&color=f43f5e" className="w-10 h-10 rounded-full border border-gray-200" alt="profile" />
+                    <img src={userAvatar} className="w-10 h-10 rounded-full border border-gray-200" alt="profile" />
                     <div>
-                        <div className="text-sm font-bold text-gray-900">Admin User</div>
-                        <div className="text-[11px] text-gray-500">admin@parahita.com</div>
+                        <div className="text-sm font-bold text-gray-900">{userName}</div>
+                        <div className="text-[11px] text-gray-500">{userRole} ({currentUser?.username || 'adminpps'})</div>
                     </div>
                     <span className={`material-symbols-outlined text-gray-400 text-lg transition-transform ${userMenuOpen ? 'rotate-180' : ''}`}>expand_more</span>
                 </div>
                 
                 {userMenuOpen && (
-                  <div className="absolute top-14 right-0 w-48 bg-white border border-gray-100 rounded-xl shadow-lg z-50 overflow-hidden animate-fade-in">
-                    <div className="px-4 py-3 border-b border-gray-100">
-                       <div className="text-sm font-bold text-gray-900">Admin User</div>
-                       <div className="text-[11px] text-gray-500">Super Admin (Owner)</div>
+                  <div className="absolute top-14 right-0 w-56 bg-white border border-gray-100 rounded-xl shadow-lg z-50 overflow-hidden animate-fade-in">
+                    <div className="px-4 py-3 border-b border-gray-100 bg-slate-50">
+                       <div className="text-xs font-bold text-gray-900">{userName}</div>
+                       <div className="text-[10px] text-amber-600 font-bold mt-0.5">Role: {userRole}</div>
+                       <div className="text-[10px] text-gray-400 font-mono mt-0.5">{userEmail}</div>
                     </div>
                     <div className="py-1">
-                      <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
-                        <span className="material-symbols-outlined text-[18px] text-gray-400">person</span>
-                        Profile
-                      </button>
-                      <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                      <NavLink to="/login" className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[18px] text-amber-500">vpn_key</span>
+                        Ganti User / Login Form
+                      </NavLink>
+                      <NavLink to="/portal" className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[18px] text-gray-400">devices</span>
+                        Portal Platform
+                      </NavLink>
+                      <NavLink to="/erp/setup" className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
                         <span className="material-symbols-outlined text-[18px] text-gray-400">settings</span>
-                        Pengaturan
-                      </button>
+                        Pengaturan & Reset
+                      </NavLink>
                     </div>
                     <div className="border-t border-gray-100 py-1">
-                      <button onClick={() => window.location.href='/'} className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 font-medium">
+                      <button onClick={handleLogout} className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 font-medium">
                         <span className="material-symbols-outlined text-[18px]">logout</span>
-                        Keluar
+                        Keluar / Logout
                       </button>
                     </div>
                   </div>

@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, doc, getDocs, writeBatch, deleteDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { useAuth } from '../context/AuthContext';
 
 interface GudangItem {
   id?: string;
@@ -20,6 +21,7 @@ interface GudangItem {
 }
 
 export default function DataGudang() {
+  const { canEditGudang } = useAuth();
   const [data, setData] = useState<GudangItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -223,28 +225,30 @@ export default function DataGudang() {
             </p>
           </div>
           
-          <div className="flex flex-col sm:flex-row gap-3">
-             <button 
-              onClick={() => setShowClearConfirm(true)}
-              disabled={data.length === 0}
-              className="disabled:opacity-50 disabled:cursor-not-allowed bg-error/10 text-error font-label text-sm font-medium px-5 py-2.5 rounded-xl hover:bg-error/20 transition-colors flex items-center justify-center gap-2"
-            >
-              <span className="material-symbols-outlined text-[18px]">delete_sweep</span>
-              Hapus Semua
-            </button>
-            <button 
-              onClick={() => setShowAddModal(true)}
-              className="bg-surface-container-lowest text-primary font-label text-sm font-medium px-5 py-2.5 rounded-xl hover:bg-surface-bright transition-colors flex items-center justify-center gap-2 ghost-border shadow-sm border border-outline-variant/30"
-            >
-              <span className="material-symbols-outlined text-[18px]">add</span>
-              Tambah Barang
-            </button>
-            <label className="cursor-pointer bg-gradient-to-b from-primary to-primary-container text-on-primary font-label text-sm font-medium px-5 py-2.5 rounded-xl shadow-sm hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2">
-              <span className="material-symbols-outlined text-[18px]">upload_file</span>
-              Import Excel/CSV
-              <input type="file" className="hidden" accept=".csv, .xlsx" ref={fileInputRef} onChange={handleFileUpload} />
-            </label>
-          </div>
+          {canEditGudang && (
+            <div className="flex flex-col sm:flex-row gap-3">
+               <button 
+                onClick={() => setShowClearConfirm(true)}
+                disabled={data.length === 0}
+                className="disabled:opacity-50 disabled:cursor-not-allowed bg-error/10 text-error font-label text-sm font-medium px-5 py-2.5 rounded-xl hover:bg-error/20 transition-colors flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined text-[18px]">delete_sweep</span>
+                Hapus Semua
+              </button>
+              <button 
+                onClick={() => setShowAddModal(true)}
+                className="bg-surface-container-lowest text-primary font-label text-sm font-medium px-5 py-2.5 rounded-xl hover:bg-surface-bright transition-colors flex items-center justify-center gap-2 ghost-border shadow-sm border border-outline-variant/30"
+              >
+                <span className="material-symbols-outlined text-[18px]">add</span>
+                Tambah Barang
+              </button>
+              <label className="cursor-pointer bg-gradient-to-b from-primary to-primary-container text-on-primary font-label text-sm font-medium px-5 py-2.5 rounded-xl shadow-sm hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">upload_file</span>
+                Import Excel/CSV
+                <input type="file" className="hidden" accept=".csv, .xlsx" ref={fileInputRef} onChange={handleFileUpload} />
+              </label>
+            </div>
+          )}
         </header>
 
         <div className="mb-6 flex flex-col sm:flex-row items-center gap-3 w-full">

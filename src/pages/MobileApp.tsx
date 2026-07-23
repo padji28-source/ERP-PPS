@@ -7,8 +7,9 @@ import {
   Bell, CheckSquare, FileCheck
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, getDocs, doc, updateDoc, setDoc, writeBatch } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, setDoc, writeBatch, addDoc, serverTimestamp, query, orderBy, limit } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+import { resetDatabaseData } from '../services/resetService';
 
 const APP_BRAND = {
   name: "PARAHITA ERP",
@@ -40,6 +41,9 @@ export default function MobileApp() {
   const [salesOrders, setSalesOrders] = useState<any[]>([]);
   const [productionJobs, setProductionJobs] = useState<any[]>([]);
   const [materials, setMaterials] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  
+  const [ownerFilter, setOwnerFilter] = useState("Semua"); // Semua | Pending | Proses | Selesai
   
   const [selectedRole, setSelectedRole] = useState("Owner");
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -49,14 +53,45 @@ export default function MobileApp() {
   const [cameraMockActive, setCameraMockActive] = useState(false);
   const [activeJobFocus, setActiveJobFocus] = useState<string | null>(null);
   
+  const [pinModalRole, setPinModalRole] = useState<string | null>(null);
+  const [pinInput, setPinInput] = useState("");
+
   const [materialForm, setMaterialForm] = useState({ id: "", itemCode: "", itemName: "", stock: 0, category: "Fabric" });
   const [isEditingMaterial, setIsEditingMaterial] = useState(false);
   const [qcForm, setQcForm] = useState({ passed: 0, rework: 0, reject: 0, defect: "", type: "Interim QC" });
   const [cuttingRoute, setCuttingRoute] = useState("Sablon");
+  
+  const [cuttingInputQty, setCuttingInputQty] = useState(0);
+  const [processGoodQty, setProcessGoodQty] = useState(0);
+  const [processNotGoodQty, setProcessNotGoodQty] = useState(0);
+  const [processDate, setProcessDate] = useState(new Date().toISOString().split('T')[0]);
+  const [processVendor, setProcessVendor] = useState("");
 
   const showToast = (message: string, type = 'info') => {
     setToastMessage({ message, type });
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const pushNotification = async (message: string) => {
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        message,
+        role: selectedRole,
+        createdAt: serverTimestamp()
+      });
+    } catch(e) {
+      console.error('Failed to log notification', e);
+    }
+  };
+
+  const getBaseId = (id: string) => {
+    if (id.includes('-')) {
+      const parts = id.split('-');
+      if (parts.length > 1 && !isNaN(parseInt(parts[parts.length - 1]))) {
+        return parts.slice(0, -1).join('-');
+      }
+    }
+    return id;
   };
 
   const loadData = async () => {
@@ -66,7 +101,7 @@ export default function MobileApp() {
       soSnap.forEach(d => soList.push({ ...d.data(), id: d.id }));
       
       const pureSo = soList.reduce((acc, curr) => {
-        const baseId = curr.id.split('-')[0];
+        const baseId = getBaseId(curr.id);
         if (!acc.find((s:any) => s.id === baseId)) {
           acc.push({ ...curr, id: baseId, originalId: curr.id });
         }
@@ -79,7 +114,12 @@ export default function MobileApp() {
       const invList: any[] = [];
       invSnap.forEach(d => invList.push({ ...d.data(), id: d.id }));
       setMaterials(invList);
-
+      
+      const notifQ = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'), limit(50));
+      const notifSnap = await getDocs(notifQ);
+      const notifList: any[] = [];
+      notifSnap.forEach(d => notifList.push({ ...d.data(), id: d.id }));
+      setNotifications(notifList);
     } catch (e) {
       handleFirestoreError(e, OperationType.GET, 'multiple');
     }
@@ -102,6 +142,7 @@ export default function MobileApp() {
       });
       if (approvedCount > 0) {
         await batch.commit();
+        await pushNotification(`Owner menyetujui ${approvedCount} Order dari SO ${soId}`);
         showToast(`Sales Order ${soId} Disetujui!`, 'success');
         loadData();
       } else {
@@ -130,10 +171,67 @@ export default function MobileApp() {
     try {
       const { query, collection, where, getDocs } = await import('firebase/firestore');
 
-      await updateDoc(doc(db, 'sales_orders', jobId), {
+      const updates: any = {
         stage: nextStage,
         status: nextStatus
-      });
+      };
+
+      if (job.stage === 'Cutting' && payload.cuttingQty) {
+        const processedQty = payload.cuttingQty;
+        const totalQty = job.qty;
+        
+        if (processedQty < totalQty) {
+           const sisaQty = totalQty - processedQty;
+           updates.qty = processedQty;
+           
+           const splitId = `${job.id}-KB${Math.floor(Math.random() * 1000)}`;
+           const splitItem = {
+             ...job,
+             id: splitId,
+             qty: sisaQty,
+             status: 'Pending'
+           };
+           await setDoc(doc(db, 'sales_orders', splitId), splitItem);
+        }
+      } else if (['Sablon', 'Bordir'].includes(job.stage) && payload.goodQty !== undefined) {
+         const goodQty = payload.goodQty;
+         const notGoodQty = payload.notGoodQty || 0;
+         updates.qty = goodQty;
+         updates[`${job.stage}_date`] = payload.date;
+         updates[`${job.stage}_vendor`] = payload.vendor;
+         
+         if (notGoodQty > 0) {
+           const splitId = `${job.id}-NG${Math.floor(Math.random() * 1000)}`;
+           const splitItem = {
+             ...job,
+             id: splitId,
+             qty: notGoodQty,
+             stage: job.stage,
+             status: 'Pending'
+           };
+           await setDoc(doc(db, 'sales_orders', splitId), splitItem);
+         }
+      } else if (job.stage === 'Sewing' && payload.goodQty !== undefined) {
+         const goodQty = payload.goodQty;
+         const notGoodQty = payload.notGoodQty || 0;
+         updates.qty = goodQty;
+         updates.sewing_receive_date = payload.date;
+         updates.sewing_vendor = payload.vendor;
+         
+         if (notGoodQty > 0) {
+           const splitId = `${job.id}-NG${Math.floor(Math.random() * 1000)}`;
+           const splitItem = {
+             ...job,
+             id: splitId,
+             qty: notGoodQty,
+             stage: job.stage,
+             status: 'Pending'
+           };
+           await setDoc(doc(db, 'sales_orders', splitId), splitItem);
+         }
+      }
+
+      await updateDoc(doc(db, 'sales_orders', jobId), updates);
 
       if (nextStatus === 'Selesai' && job.poNumber) {
         const poDocId = job.poNumber.replace(/\//g, '-');
@@ -152,9 +250,11 @@ export default function MobileApp() {
 
         if (allSelesai) {
           await updateDoc(doc(db, 'purchase_orders', poDocId), { status: 'Close' });
+          await pushNotification(`Purchase Order ${job.poNumber} selesai dikerjakan.`);
         }
       }
 
+      await pushNotification(`Worksheet ${jobId} dipindah ke tahap ${nextStage}`);
       showToast(`Worksheet ${jobId} diproses ke tahap ${nextStage}`, 'success');
       loadData();
       setActiveJobFocus(null);
@@ -180,6 +280,7 @@ export default function MobileApp() {
         qcRejectQty: qcForm.reject,
         qcDefectReason: qcForm.defect
       });
+      await pushNotification(`Hasil QC ${job.id} disimpan: ${qcForm.passed} Lolos, ${qcForm.reject} Reject`);
       showToast(`Hasil QC disimpan. ${qcForm.passed} Pcs lolos.`, 'success');
       setActiveJobFocus(null);
       setCurrentPhoneScreen("home");
@@ -194,6 +295,7 @@ export default function MobileApp() {
     try {
       const docRef = materialForm.id ? doc(db, 'warehouse_items', materialForm.id) : doc(collection(db, 'warehouse_items'));
       await setDoc(docRef, materialForm, { merge: true });
+      await pushNotification(`Material ${materialForm.itemCode} ${materialForm.itemName} stok ${materialForm.stock} diperbarui`);
       showToast(`Material berhasil disimpan!`, "success");
       setMaterialForm({ id: "", itemCode: "", itemName: "", stock: 0, category: "Fabric" });
       setIsEditingMaterial(false);
@@ -205,16 +307,26 @@ export default function MobileApp() {
     }
   };
 
+  const handleOpenProductionAction = (job: any) => {
+    setActiveJobFocus(job.id);
+    setCurrentPhoneScreen("production_action");
+    setCuttingInputQty(job.qty);
+    setProcessGoodQty(job.qty);
+    setProcessNotGoodQty(0);
+    setProcessDate(new Date().toISOString().split('T')[0]);
+    setProcessVendor("");
+  };
+
   const handleBarcodeScanSuccess = (code: string) => {
     setCameraMockActive(false);
     const job = productionJobs.find(j => j.id === code);
     if (job) {
-      setActiveJobFocus(job.id);
       if (selectedRole === "QC" && (job.stage === "QC" || job.stage === "Sewing")) {
+        setActiveJobFocus(job.id);
         setQcForm({ passed: job.qty || 0, rework: 0, reject: 0, defect: "", type: "QC" });
         setCurrentPhoneScreen("qc_form");
       } else if (selectedRole === "Production") {
-        setCurrentPhoneScreen("production_action");
+        handleOpenProductionAction(job);
       } else {
         showToast("Access denied untuk peran " + selectedRole, "warning");
       }
@@ -225,41 +337,113 @@ export default function MobileApp() {
 
   if (currentPhoneScreen === "login") {
     return (
-      <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'} flex flex-col justify-between p-6 transition-colors duration-300 relative w-full h-full`}>
-        <div className="absolute top-4 right-4">
-           <button onClick={() => navigate('/')} className="bg-white/10 p-2 rounded-full border border-slate-300 shadow-sm text-sm font-bold opacity-80 hover:opacity-100">
-             Versi ERP (Desktop) &rarr;
+      <div className={`min-h-[100dvh] flex flex-col relative w-full h-full sm:max-w-md sm:mx-auto sm:border-x sm:shadow-2xl ${isDarkMode ? 'bg-gradient-to-br from-slate-900 to-slate-950 text-slate-100 sm:border-slate-800' : 'bg-gradient-to-br from-slate-50 to-slate-100 text-slate-900 sm:border-slate-200'} transition-all duration-500 overflow-hidden`}>
+        {/* Decorative background blurs */}
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[20%] bg-amber-500/20 blur-[100px] rounded-full pointer-events-none"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[20%] bg-emerald-500/20 blur-[100px] rounded-full pointer-events-none"></div>
+
+        <div className="absolute top-5 right-5 z-20">
+           <button onClick={() => navigate('/')} className={`px-4 py-2 rounded-full border shadow-sm text-xs font-black tracking-wide transition-all hover:scale-105 active:scale-95 ${isDarkMode ? 'bg-white/10 border-white/20 hover:bg-white/20 text-white' : 'bg-white/50 border-slate-200 hover:bg-white text-slate-700 backdrop-blur-md'}`}>
+             Dekstop ERP &rarr;
            </button>
         </div>
-        <div className="mt-16 text-center flex flex-col items-center">
-          <div className="bg-amber-500 text-white p-5 rounded-3xl shadow-xl shadow-amber-500/30 mb-6">
-            <Activity className="h-10 w-10 stroke-[2.5]" />
+        
+        <div className="flex-1 flex flex-col justify-center px-8 z-10 pb-8 mt-16 mt:mt-0">
+          <div className="text-center flex flex-col items-center mb-10">
+            <div className="bg-gradient-to-tr from-amber-600 to-amber-400 text-white p-5 rounded-[2rem] shadow-2xl shadow-amber-500/30 mb-6 transform -rotate-3 hover:rotate-0 transition-transform duration-300">
+              <Activity className="h-10 w-10 stroke-[2.5]" />
+            </div>
+            <h3 className="text-4xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-b from-slate-900 to-slate-600 dark:from-white dark:to-slate-400">{APP_BRAND.name}</h3>
+            <p className="text-xs font-black uppercase tracking-[0.2em] mt-3 opacity-50">{APP_BRAND.tagline}</p>
           </div>
-          <h3 className="text-3xl font-black tracking-tight">{APP_BRAND.name}</h3>
-          <p className="text-sm font-bold uppercase tracking-widest mt-2">{APP_BRAND.tagline}</p>
-        </div>
-        <div className="w-full max-w-sm mx-auto space-y-4 pt-10 flex-1">
-          <div className={`border p-6 rounded-2xl text-center shadow-md ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-            <p className="text-sm mb-4 font-bold uppercase tracking-widest opacity-60">Pilih Akses Kerja</p>
-            <div className="flex flex-col gap-3">
-              {[
-                  { id: "Owner", label: "Owner Panel", icon: Award },
-                  { id: "Production", label: "Operator Produksi", icon: Scissors },
-                  { id: "QC", label: "Inspektur QC", icon: ShieldAlert },
-                  { id: "Warehouse", label: "Staff Gudang", icon: Package }
-              ].map(role => (
-                <button 
-                  key={role.id}
-                  onClick={() => { setSelectedRole(role.id); setCurrentPhoneScreen("home"); }}
-                  className={`w-full ${selectedRole === role.id ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30' : (isDarkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700')} hover:bg-amber-600 hover:text-white font-bold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 text-sm border ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}
-                >
-                  <role.icon className="h-4 w-4 stroke-[2.5]" />
-                  {role.label}
-                </button>
-              ))}
+          
+          <div className="w-full max-w-sm mx-auto">
+            <div className={`p-1.5 rounded-3xl shadow-xl backdrop-blur-xl border ${isDarkMode ? 'bg-slate-900/50 border-slate-700/50' : 'bg-white/60 border-white'} ring-1 ring-black/5`}>
+              <div className="px-6 py-4 border-b border-black/5 dark:border-white/5 mb-2">
+                <p className="text-xs font-black uppercase tracking-widest opacity-40 text-center">Pilih Akses Kerja</p>
+              </div>
+              <div className="flex flex-col gap-2 p-3">
+                {[
+                    { id: "Owner", label: "Owner Panel", icon: Award },
+                    { id: "Production", label: "Operator Produksi", icon: Scissors },
+                    { id: "QC", label: "Inspektur QC", icon: ShieldAlert },
+                    { id: "Warehouse", label: "Staff Gudang", icon: Package }
+                ].map(role => (
+                  <button 
+                    key={role.id}
+                    onClick={() => {
+                      setPinModalRole(role.id);
+                      setPinInput("");
+                    }}
+                    className={`w-full ${selectedRole === role.id ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30 scale-[1.02]' : (isDarkMode ? 'bg-slate-800/80 text-slate-300 hover:bg-slate-700' : 'bg-slate-100/50 text-slate-700 hover:bg-slate-200/50')} font-bold py-4 px-5 rounded-2xl transition-all duration-200 flex items-center justify-between text-sm group border ${isDarkMode ? 'border-slate-700/50' : 'border-slate-200/50'}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-xl transition-colors ${selectedRole === role.id ? 'bg-white/20' : (isDarkMode ? 'bg-slate-900 group-hover:bg-slate-800' : 'bg-white group-hover:bg-slate-100')}`}>
+                        <role.icon className="h-4 w-4 stroke-[2.5]" />
+                      </div>
+                      {role.label}
+                    </div>
+                    <ArrowLeft className="h-4 w-4 opacity-0 -translate-x-4 group-hover:opacity-100 group-hover:translate-x-0 transition-all rotate-180" />
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>
+
+        {/* PIN Modal Overlay */}
+        {pinModalRole && (
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <div className={`w-full max-w-xs ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white/90 border-white'} border rounded-[2rem] p-8 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 backdrop-blur-xl`}>
+              <button 
+                onClick={() => setPinModalRole(null)}
+                className={`absolute top-5 right-5 p-2 rounded-full transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-700' : 'text-slate-400 hover:bg-slate-100'}`}
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+              
+              <div className="text-center mb-8 mt-2">
+                <div className="w-16 h-16 bg-gradient-to-tr from-amber-200 to-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-inner shadow-white/50 transform rotate-3">
+                  <ShieldAlert className="h-8 w-8 stroke-[2.5]" />
+                </div>
+                <h3 className="font-black text-2xl tracking-tight">Kode Keamanan</h3>
+                <p className="text-xs opacity-60 font-bold mt-1.5 uppercase tracking-wider">{pinModalRole} Access</p>
+              </div>
+
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                placeholder="••••••"
+                className={`w-full text-center tracking-[0.5em] font-black text-3xl py-4 rounded-2xl border-2 outline-none transition-all ${
+                  isDarkMode 
+                    ? 'bg-slate-900/50 border-slate-700 focus:border-amber-500 text-white shadow-inner shadow-black/20' 
+                    : 'bg-slate-50/50 border-slate-200 focus:border-amber-500 text-slate-900 shadow-inner'
+                }`}
+                autoFocus
+              />
+
+              <button
+                onClick={() => {
+                  const correctPin = pinModalRole === "Owner" ? "220596" : "123456";
+                  if (pinInput === correctPin) {
+                    setSelectedRole(pinModalRole);
+                    setCurrentPhoneScreen("home");
+                    setPinModalRole(null);
+                  } else {
+                    showToast("PIN Salah!", "warning");
+                    setPinInput("");
+                  }
+                }}
+                className="w-full mt-6 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-600 hover:to-amber-500 text-white font-black py-4 rounded-2xl transition-all hover:scale-[1.02] active:scale-[0.98] shadow-xl shadow-amber-500/25 flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined text-[18px]">lock_open</span> Buka Akses
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -302,9 +486,12 @@ export default function MobileApp() {
               <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse ring-2 ring-emerald-500/30"></div>
               <span className="text-sm font-black tracking-tight">{selectedRole} Portal</span>
             </div>
-            <button onClick={() => setCurrentPhoneScreen("login")} className={`p-2 rounded-xl ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
-              <LogOut className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setCurrentPhoneScreen("notifications")} className={`p-2 rounded-xl relative ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+                <Bell className="h-4 w-4" />
+                {notifications.length > 0 && <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />}
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5 custom-scrollbar">
@@ -322,9 +509,31 @@ export default function MobileApp() {
                   </div>
                 </div>
 
+                <div className="flex gap-2 pb-2 overflow-x-auto custom-scrollbar">
+                  {["Semua", "Pending", "Proses", "Selesai"].map(filterTab => (
+                    <button 
+                      key={filterTab}
+                      onClick={() => setOwnerFilter(filterTab)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-colors ${
+                        ownerFilter === filterTab 
+                          ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20' 
+                          : (isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500')
+                      }`}
+                    >
+                      {filterTab}
+                    </button>
+                  ))}
+                </div>
+
                 <div>
-                  <h4 className="text-xs font-black uppercase opacity-60 mb-2 px-1">Sales Order Approval</h4>
-                  {productionJobs.filter(s => s.status === "Pending").map(so => (
+                  <h4 className="text-xs font-black uppercase opacity-60 mb-2 px-1">Daftar Pekerjaan ({ownerFilter})</h4>
+                  {productionJobs.filter(s => {
+                    if (ownerFilter === "Semua") return true;
+                    if (ownerFilter === "Pending") return s.status === "Pending";
+                    if (ownerFilter === "Selesai") return s.status === "Selesai";
+                    if (ownerFilter === "Proses") return s.status !== "Pending" && s.status !== "Selesai";
+                    return true;
+                  }).map(so => (
                     <div key={so.id} className={`border p-4 rounded-xl shadow-sm mb-3 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
                       <div className="flex justify-between items-start mb-2">
                         <div>
@@ -332,17 +541,29 @@ export default function MobileApp() {
                           <h5 className="text-sm font-bold mt-1">{so.product}</h5>
                           <p className="text-[10px] opacity-60">{so.client} • Qty: {so.qty}</p>
                         </div>
+                        <span className={`text-[10px] px-2 py-1 rounded-lg font-bold border ${STATUS_COLORS[so.stage || so.status || 'Pending']}`}>
+                          {so.stage || so.status || 'Pending'}
+                        </span>
                       </div>
-                      <button 
-                        onClick={() => handleApproveSO(so.id.split('-')[0])}
-                        className={`w-full mt-2 py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-2 ${isDarkMode ? 'bg-amber-500 text-white' : 'bg-slate-900 text-white'}`}
-                      >
-                        <CheckCircle2 className="h-4 w-4" /> Approve ke Produksi
-                      </button>
+                      
+                      {so.status === "Pending" && (
+                        <button 
+                          onClick={() => handleApproveSO(getBaseId(so.id))}
+                          className={`w-full mt-2 py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-2 ${isDarkMode ? 'bg-amber-500 text-white' : 'bg-slate-900 text-white'}`}
+                        >
+                          <CheckCircle2 className="h-4 w-4" /> Approve ke Produksi
+                        </button>
+                      )}
                     </div>
                   ))}
-                  {productionJobs.filter(s => s.status === "Pending").length === 0 && (
-                    <p className="text-xs text-center opacity-50 py-4">Semua SO telah diproses.</p>
+                  {productionJobs.filter(s => {
+                    if (ownerFilter === "Semua") return true;
+                    if (ownerFilter === "Pending") return s.status === "Pending";
+                    if (ownerFilter === "Selesai") return s.status === "Selesai";
+                    if (ownerFilter === "Proses") return s.status !== "Pending" && s.status !== "Selesai";
+                    return true;
+                  }).length === 0 && (
+                    <p className="text-xs text-center opacity-50 py-4">Tidak ada data ditemukan.</p>
                   )}
                 </div>
               </div>
@@ -372,7 +593,7 @@ export default function MobileApp() {
                         </span>
                       </div>
                       <button 
-                        onClick={() => { setActiveJobFocus(job.id); setCurrentPhoneScreen("production_action"); }}
+                        onClick={() => handleOpenProductionAction(job)}
                         className={`w-full py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-100 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100'}`}
                       >
                         Buka Worksheet <ArrowRight className="h-4 w-4" />
@@ -453,17 +674,19 @@ export default function MobileApp() {
             )}
           </div>
           
-          <div className={`border-t py-3 px-6 flex justify-between items-center z-10 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-             <button onClick={() => setCurrentPhoneScreen("home")} className={`flex flex-col items-center gap-1 text-[10px] font-bold ${currentPhoneScreen === "home" ? 'text-amber-500' : 'opacity-50'}`}>
-               <LayoutDashboard className="h-5 w-5" /> Home
+          <div className={`border-t py-4 px-8 flex justify-around items-center z-10 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} pb-6`}>
+             <button onClick={() => setCurrentPhoneScreen("home")} className={`flex flex-col items-center gap-1.5 text-[10px] font-bold transition-all ${currentPhoneScreen === "home" ? 'text-amber-500 scale-110' : 'text-slate-400 hover:text-amber-500'}`}>
+               <LayoutDashboard className={`h-6 w-6 ${currentPhoneScreen === "home" ? 'fill-amber-500/20' : ''}`} /> Home
              </button>
              {selectedRole === "Production" && (
-                <button onClick={() => setCameraMockActive(true)} className="flex flex-col items-center gap-1 text-[10px] font-bold opacity-50 hover:text-amber-500">
-                  <QrCode className="h-5 w-5" /> Scan
+                <button onClick={() => setCameraMockActive(true)} className="flex flex-col items-center gap-1.5 text-[10px] font-bold text-slate-400 hover:text-amber-500 transition-all hover:scale-110">
+                  <div className="bg-amber-500 text-white p-3 rounded-full shadow-lg shadow-amber-500/30 -mt-8 border-4 border-white dark:border-slate-900">
+                    <QrCode className="h-6 w-6" />
+                  </div>
                 </button>
              )}
-             <button className="flex flex-col items-center gap-1 text-[10px] font-bold opacity-50 hover:text-amber-500">
-               <User className="h-5 w-5" /> Profile
+             <button onClick={() => setCurrentPhoneScreen("profile")} className={`flex flex-col items-center gap-1.5 text-[10px] font-bold transition-all ${currentPhoneScreen === "profile" ? 'text-amber-500 scale-110' : 'text-slate-400 hover:text-amber-500'}`}>
+               <User className={`h-6 w-6 ${currentPhoneScreen === "profile" ? 'fill-amber-500/20' : ''}`} /> Profile
              </button>
           </div>
         </div>
@@ -509,21 +732,76 @@ export default function MobileApp() {
                                <option value="Sewing">Sewing (Lewati Sablon/Bordir)</option>
                              </select>
                            </div>
-                           <button onClick={() => handleProcessJob(job.id, { route: cuttingRoute })} className="w-full bg-blue-600 text-white py-3 rounded-xl text-xs font-bold flex justify-center gap-2">
+                           <div className="pt-2">
+                             <label className="text-[10px] font-bold opacity-60 block mb-1">Qty Lanjut ke {cuttingRoute}</label>
+                             <input type="number" 
+                               value={cuttingInputQty || job.qty} 
+                               onChange={(e) => setCuttingInputQty(Number(e.target.value))} 
+                               className={`w-full border p-3 rounded-xl text-lg text-center font-black outline-none focus:ring-2 focus:ring-amber-500 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`} 
+                             />
+                             {cuttingInputQty > 0 && cuttingInputQty < job.qty && (
+                               <p className="text-[10px] text-amber-500 font-bold mt-2">Sisa {job.qty - cuttingInputQty} pcs akan kembali ke status Pending.</p>
+                             )}
+                           </div>
+                           <button onClick={() => handleProcessJob(job.id, { route: cuttingRoute, cuttingQty: cuttingInputQty || job.qty })} className="w-full bg-blue-600 text-white py-3 rounded-xl text-xs font-bold flex justify-center gap-2">
                              <Scissors className="h-4 w-4"/> Selesai Cutting
                            </button>
                          </div>
                        )}
 
                        {['Bordir', 'Sablon'].includes(job.stage) && (
-                         <div className="text-center py-4 space-y-4">
-                           <button onClick={() => handleProcessJob(job.id)} className="w-full bg-blue-600 text-white py-3 rounded-xl text-xs font-bold">Kirim ke Sewing</button>
+                         <div className="space-y-4">
+                           <div className="grid grid-cols-2 gap-3">
+                             <div>
+                               <label className="text-[10px] font-bold opacity-60 block mb-1">Qty Good (Ke Sewing)</label>
+                               <input type="number" value={processGoodQty || job.qty} onChange={(e) => setProcessGoodQty(Number(e.target.value))} className={`w-full border p-3 rounded-xl text-sm font-bold shadow-inner ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
+                             </div>
+                             <div>
+                               <label className="text-[10px] font-bold opacity-60 block mb-1">Qty Not Good</label>
+                               <input type="number" value={processNotGoodQty} onChange={(e) => setProcessNotGoodQty(Number(e.target.value))} className={`w-full border p-3 rounded-xl text-sm font-bold shadow-inner ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
+                             </div>
+                           </div>
+                           
+                           <div>
+                             <label className="text-[10px] font-bold opacity-60 block mb-1">Tanggal Dikirim ke Sewing</label>
+                             <input type="date" value={processDate} onChange={(e) => setProcessDate(e.target.value)} className={`w-full border p-3 rounded-xl text-sm font-bold ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
+                           </div>
+                           <div>
+                             <label className="text-[10px] font-bold opacity-60 block mb-1">Nama PT/Vendor Sewing</label>
+                             <input type="text" value={processVendor} onChange={(e) => setProcessVendor(e.target.value)} placeholder="Contoh: PT. ABC Sewing" className={`w-full border p-3 rounded-xl text-sm font-bold ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
+                           </div>
+
+                           <button onClick={() => handleProcessJob(job.id, { goodQty: processGoodQty || job.qty, notGoodQty: processNotGoodQty, date: processDate, vendor: processVendor })} className="w-full bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-600/20 text-white py-3.5 rounded-xl text-xs font-black uppercase tracking-wide">
+                             Kirim ke Sewing
+                           </button>
                          </div>
                        )}
 
                        {job.stage === 'Sewing' && (
                          <div className="space-y-4">
-                           <button onClick={() => handleProcessJob(job.id)} className="w-full bg-blue-600 text-white py-3 rounded-xl text-xs font-bold">Selesai Jahit ➔ Kirim QC</button>
+                           <div className="grid grid-cols-2 gap-3">
+                             <div>
+                               <label className="text-[10px] font-bold opacity-60 block mb-1">Qty Good (Ke QC)</label>
+                               <input type="number" value={processGoodQty || job.qty} onChange={(e) => setProcessGoodQty(Number(e.target.value))} className={`w-full border p-3 rounded-xl text-sm font-bold shadow-inner ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
+                             </div>
+                             <div>
+                               <label className="text-[10px] font-bold opacity-60 block mb-1">Qty Not Good</label>
+                               <input type="number" value={processNotGoodQty} onChange={(e) => setProcessNotGoodQty(Number(e.target.value))} className={`w-full border p-3 rounded-xl text-sm font-bold shadow-inner flex ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
+                             </div>
+                           </div>
+                           
+                           <div>
+                             <label className="text-[10px] font-bold opacity-60 block mb-1">Tanggal Diterima dari Sewing</label>
+                             <input type="date" value={processDate} onChange={(e) => setProcessDate(e.target.value)} className={`w-full border p-3 rounded-xl text-sm font-bold ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
+                           </div>
+                           <div>
+                             <label className="text-[10px] font-bold opacity-60 block mb-1">Nama PT/Vendor Sewing</label>
+                             <input type="text" value={processVendor} onChange={(e) => setProcessVendor(e.target.value)} placeholder="Contoh: PT. ABC Sewing" className={`w-full border p-3 rounded-xl text-sm font-bold ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
+                           </div>
+
+                           <button onClick={() => handleProcessJob(job.id, { goodQty: processGoodQty || job.qty, notGoodQty: processNotGoodQty, date: processDate, vendor: processVendor })} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3.5 rounded-xl text-xs shadow-md shadow-blue-600/20 font-black tracking-wide uppercase">
+                             Lanjut Verifikasi QC
+                           </button>
                          </div>
                        )}
 
@@ -607,6 +885,101 @@ export default function MobileApp() {
              </div>
            </div>
          </div>
+      )}
+
+      {currentPhoneScreen === "notifications" && (
+        <div className="flex-1 flex flex-col max-w-md mx-auto w-full shadow-2xl relative">
+          <div className={`px-4 py-3 border-b flex items-center gap-3 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white'}`}>
+            <button onClick={() => setCurrentPhoneScreen("home")} className={`p-2 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100'}`}><ArrowLeft className="h-4 w-4"/></button>
+            <span className="text-sm font-black">Notifikasi Real-time</span>
+          </div>
+          
+          <div className="flex-1 p-4 overflow-y-auto space-y-3 custom-scrollbar">
+            {notifications.length === 0 && (
+              <div className="text-center py-10 opacity-50">
+                <Bell className="w-10 h-10 mx-auto mb-2" />
+                <p className="text-sm font-bold">Belum ada notifikasi.</p>
+              </div>
+            )}
+            {notifications.map(notif => (
+              <div key={notif.id} className={`p-4 rounded-xl shadow-sm border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} flex gap-3 items-start`}>
+                <div className={`p-2 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100'} mt-1 flex-shrink-0`}>
+                  <Bell className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold tracking-tight">{notif.message}</p>
+                  <p className="text-[10px] mt-1.5 font-medium opacity-60 flex items-center gap-1">
+                    <User className="w-3 h-3" /> Oleh {notif.role || 'Sistem'}
+                    <span className="mx-1">•</span>
+                    {notif.createdAt ? new Date(notif.createdAt.toDate ? notif.createdAt.toDate() : notif.createdAt).toLocaleString('id-ID') : 'Baru saja'}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {currentPhoneScreen === "profile" && (
+        <div className="flex-1 flex flex-col max-w-md mx-auto w-full shadow-2xl relative">
+          <div className={`px-4 py-3 border-b flex items-center gap-3 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white'}`}>
+            <button onClick={() => setCurrentPhoneScreen("home")} className={`p-2 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100'}`}><ArrowLeft className="h-4 w-4"/></button>
+            <span className="text-sm font-black">Profil Akun</span>
+          </div>
+          
+          <div className="flex-1 p-5 overflow-y-auto">
+            <div className={`p-6 rounded-3xl border shadow-sm flex flex-col items-center text-center ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+               <div className="w-20 h-20 rounded-full border-4 border-amber-500 overflow-hidden mb-3">
+                 <img src={`https://ui-avatars.com/api/?name=${selectedRole}&background=fcd34d&color=b45309`} alt="User" className="w-full h-full object-cover" />
+               </div>
+               <h2 className="text-xl font-black">{selectedRole}</h2>
+               <p className="text-xs font-bold uppercase tracking-widest opacity-50 mt-1 whitespace-nowrap">Hak Akses: {selectedRole} ERP</p>
+               
+               <div className="w-full h-px bg-slate-200 dark:bg-slate-800 my-5"></div>
+               
+               <div className="w-full space-y-3">
+                 <div className={`flex justify-between items-center p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
+                   <span className="text-xs font-bold opacity-70">App Theme</span>
+                   <button onClick={() => setIsDarkMode(!isDarkMode)} className="text-xs font-black bg-amber-500 text-white px-3 py-1 rounded-full shadow-sm">
+                     {isDarkMode ? 'Ganti ke Terang' : 'Ganti ke Gelap'}
+                   </button>
+                 </div>
+                 
+                 <div className={`flex justify-between items-center p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
+                   <span className="text-xs font-bold opacity-70">Versi Desktop App</span>
+                   <button onClick={() => navigate('/erp')} className="text-xs font-black px-3 py-1 bg-slate-900 text-white dark:bg-white dark:text-slate-900 rounded-full shadow-sm">
+                     Buka ERP
+                   </button>
+                 </div>
+
+                 <div className={`flex justify-between items-center p-3 rounded-xl border border-red-500/20 ${isDarkMode ? 'bg-red-950/30' : 'bg-red-50'}`}>
+                   <span className="text-xs font-bold text-red-600 dark:text-red-400">Reset Database</span>
+                   <button 
+                     onClick={async () => {
+                       if (window.confirm("Apakah Anda yakin ingin melakukan RESET seluruh data di database Firestore ke data sampel awal?")) {
+                         showToast('Memproses reset database...', 'info');
+                         const res = await resetDatabaseData();
+                         if (res.success) {
+                           showToast(res.message, 'success');
+                           setTimeout(() => window.location.reload(), 1000);
+                         } else {
+                           showToast(res.message, 'warning');
+                         }
+                       }
+                     }} 
+                     className="text-xs font-black px-3 py-1 bg-red-600 text-white rounded-full shadow-sm hover:bg-red-700 transition-colors"
+                   >
+                     Reset DB
+                   </button>
+                 </div>
+               </div>
+               
+               <button onClick={() => setCurrentPhoneScreen("login")} className="w-full mt-6 bg-red-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-red-500/20 transition-all active:scale-95 flex items-center justify-center gap-2">
+                 <LogOut className="w-4 h-4" /> Keluar Akun
+               </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

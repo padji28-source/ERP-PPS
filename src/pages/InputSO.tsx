@@ -3,8 +3,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, doc, getDocs, getDoc, setDoc, writeBatch, deleteDoc } from 'firebase/firestore';
+import { useAuth } from '../context/AuthContext';
 
 export default function InputSO() {
+  const { canCreateSO } = useAuth();
   const [view, setView] = useState<'list' | 'form'>('list');
   const [sos, setSos] = useState<any[]>([]);
 
@@ -20,6 +22,7 @@ export default function InputSO() {
   const [clientName, setClientName] = useState("");
   const [deadline, setDeadline] = useState("");
   const [note, setNote] = useState("");
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const SIZES = ["S", "M", "L", "XL", "XXL", "XXXL"];
@@ -36,7 +39,13 @@ export default function InputSO() {
       const soMap: Record<string, any> = {};
       qs.forEach(d => {
         const data = d.data();
-        const baseId = data.id.split('-')[0]; // Extract "SO/2026/05/001" from "SO/2026/05/001-1"
+        let baseId = data.id;
+        if (data.id.includes('-')) {
+          const parts = data.id.split('-');
+          if (parts.length > 1 && !isNaN(parseInt(parts[parts.length - 1]))) {
+            baseId = parts.slice(0, -1).join('-');
+          }
+        }
         if (!soMap[baseId]) {
           soMap[baseId] = {
             id: baseId,
@@ -61,18 +70,24 @@ export default function InputSO() {
     }
   };
 
-  const handleDeleteSO = async (id: string, firestoreIds: string[]) => {
-    if (confirm(`Hapus SO ${id}?`)) {
-      try {
-        const batch = writeBatch(db);
-        firestoreIds.forEach(fId => {
-          batch.delete(doc(db, 'sales_orders', fId));
-        });
-        await batch.commit();
-        setSos(sos.filter(s => s.id !== id));
-      } catch (e) {
-        handleFirestoreError(e, OperationType.DELETE, 'sales_orders');
-      }
+  const [deleteConfirm, setDeleteConfirm] = useState<{id: string, firestoreIds: string[]} | null>(null);
+
+  const handleDeleteSOClick = (id: string, firestoreIds: string[]) => {
+    setDeleteConfirm({ id, firestoreIds });
+  };
+
+  const confirmDeleteSO = async () => {
+    if (!deleteConfirm) return;
+    try {
+      const batch = writeBatch(db);
+      deleteConfirm.firestoreIds.forEach(fId => {
+        batch.delete(doc(db, 'sales_orders', fId));
+      });
+      await batch.commit();
+      setSos(sos.filter(s => s.id !== deleteConfirm.id));
+      setDeleteConfirm(null);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, 'sales_orders');
     }
   };
 
@@ -86,12 +101,14 @@ export default function InputSO() {
         const seqDoc = await getDoc(doc(db, 'system_configs', 'so_sequence'));
         const nextSeq = seqDoc.exists() ? (seqDoc.data().value || 1) : 1;
         const seqStr = String(nextSeq).padStart(3, '0');
-        if (!soNumber) setSoNumber(`SO/${year}/${month}/${seqStr}`);
+        if (!soNumber) setSoNumber(`SO-${year}-${month}-${seqStr}`);
       } catch(e) {
-        if (!soNumber) setSoNumber(`SO/${year}/${month}/001`);
+        if (!soNumber) setSoNumber(`SO-${year}-${month}-001`);
       }
     }
-    loadSeq();
+    if (view === 'form' && !soNumber) {
+      loadSeq();
+    }
   }, [view]);
 
   useEffect(() => {
@@ -175,13 +192,15 @@ export default function InputSO() {
                   Lihat dan kelola Sales Order yang telah dibuat.
                 </p>
               </div>
-              <button 
-                onClick={() => setView('form')}
-                className="bg-primary hover:bg-primary/90 text-on-primary font-bold py-2.5 px-4 rounded-lg flex items-center transition-colors shadow-sm"
-              >
-                <span className="material-symbols-outlined mr-2">add</span>
-                Tambahkan Transaksi Sales Order Baru
-              </button>
+              {canCreateSO && (
+                <button 
+                  onClick={() => setView('form')}
+                  className="bg-primary hover:bg-primary/90 text-on-primary font-bold py-2.5 px-4 rounded-lg flex items-center transition-colors shadow-sm"
+                >
+                  <span className="material-symbols-outlined mr-2">add</span>
+                  Tambahkan Transaksi Sales Order Baru
+                </button>
+              )}
             </header>
 
             <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden shadow-sm">
@@ -226,7 +245,7 @@ export default function InputSO() {
                         </td>
                         <td className="p-4 text-center">
                           <button 
-                            onClick={() => handleDeleteSO(so.id, so.firestoreIds)}
+                            onClick={() => handleDeleteSOClick(so.id, so.firestoreIds)}
                             className="text-error hover:bg-error-container p-2 rounded-lg transition-colors"
                           >
                             <span className="material-symbols-outlined text-[18px]">delete</span>
@@ -319,7 +338,7 @@ export default function InputSO() {
                       <label className="text-sm text-outline font-medium tracking-wider uppercase">Sales Order Number</label>
                       <input 
                         className="w-full bg-surface-container-low text-on-surface text-lg py-4 px-5 rounded-xl border-none outline-none focus:ring-2 focus:ring-primary/40 transition-shadow placeholder:text-outline-variant font-medium ghost-border focus:ghost-border-primary" 
-                        placeholder="SO/2026/05/001" 
+                        placeholder="SO-2026-05-001" 
                         value={soNumber}
                         onChange={(e) => setSoNumber(e.target.value)}
                         type="text"
@@ -497,19 +516,19 @@ export default function InputSO() {
                   type="button"
                   onClick={async () => {
                     if (!clientName || !soNumber || selectedProducts.length === 0 || !deadline) {
-                      alert("Harap lengkapi Client Name, Sales Order Number, Product Name, dan Deadline!");
+                      setAlertMessage("Harap lengkapi Client Name, Sales Order Number, Product Name, dan Deadline!");
                       return;
                     }
 
                     const today = new Date();
                     const year = today.getFullYear();
                     const month = String(today.getMonth() + 1).padStart(2, '0');
-                    if (soNumber.startsWith(`SO/${year}/${month}/`)) {
-                      const seqParts = soNumber.split('/');
+                    if (soNumber.startsWith(`SO-${year}-${month}-`)) {
+                      const seqParts = soNumber.split('-');
                       const seq = parseInt(seqParts[seqParts.length - 1], 10);
                       if (!isNaN(seq)) {
                         try {
-                          await setDoc(doc(db, 'system_configs', 'so_sequence'), { value: seq });
+                          await setDoc(doc(db, 'system_configs', 'so_sequence'), { value: seq + 1 });
                         } catch(e) {}
                       }
                     }
@@ -555,7 +574,7 @@ export default function InputSO() {
                         batch.set(doc(db, 'sales_orders', docId), order);
                       });
                       await batch.commit();
-                      alert("Sales Order berhasil disimpan!");
+                      setAlertMessage("Sales Order berhasil disimpan!");
                       resetForm();
                       setView('list');
                     } catch(e) {
@@ -570,6 +589,48 @@ export default function InputSO() {
           </>
         )}
       </main>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface rounded-xl shadow-lg max-w-md w-full p-6 animate-in fade-in zoom-in duration-200">
+            <h3 className="text-xl font-headline font-bold text-on-surface mb-2">Konfirmasi Hapus</h3>
+            <p className="text-on-surface-variant mb-6 text-sm">
+              Apakah Anda yakin ingin menghapus Sales Order <span className="font-bold text-on-surface">{deleteConfirm.id}</span>? Tindakan ini tidak dapat dibatalkan.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => setDeleteConfirm(null)}
+                className="px-4 py-2 bg-surface-container hover:bg-surface-container-high text-on-surface font-semibold rounded-lg transition-colors text-sm"
+              >
+                Batal
+              </button>
+              <button 
+                onClick={confirmDeleteSO}
+                className="px-4 py-2 bg-error hover:bg-error/90 text-on-error font-bold rounded-lg transition-colors text-sm"
+              >
+                Hapus SO
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Alert Modal */}
+      {alertMessage && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface rounded-xl shadow-lg max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200 text-center">
+            <span className="material-symbols-outlined text-4xl text-primary mb-3">info</span>
+            <p className="text-on-surface font-semibold mb-6">{alertMessage}</p>
+            <button 
+              onClick={() => setAlertMessage(null)}
+              className="w-full py-2 bg-primary hover:bg-primary/90 text-on-primary font-bold rounded-lg transition-colors text-sm"
+            >
+              Mengerti
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { fetchProductionData, ProductionOrder, getDeadlineDelta, formatDeadlineLabel } from "../services/dataService";
+import { useAuth } from "../context/AuthContext";
 
 export default function WIPKanban() {
+  const { canVerifyWIPStage, currentUser } = useAuth();
   const [data, setData] = useState<ProductionOrder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState<ProductionOrder | null>(
@@ -119,6 +121,11 @@ export default function WIPKanban() {
 
   const confirmMove = async (newStage: string) => {
     if (!selectedItem) return;
+
+    if (!canVerifyWIPStage(selectedItem.stage)) {
+      alert(`Akses Ditolak: Role ${currentUser?.role || 'User'} tidak memiliki hak akses untuk memverifikasi tahap ${selectedItem.stage}.`);
+      return;
+    }
 
     let moveQty = selectedItem.qty;
     let sisa = 0; // Stays in current stage
@@ -1246,6 +1253,13 @@ export default function WIPKanban() {
                 </div>
               )}
             </div>
+
+            {!canVerifyWIPStage(selectedItem.stage) && (
+              <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center gap-2.5 text-amber-700 text-xs font-semibold">
+                <span className="material-symbols-outlined text-amber-600 text-lg shrink-0">lock</span>
+                <span>Verifikasi dibatasi: Role <strong>{currentUser?.role || 'User'}</strong> tidak memiliki wewenang untuk verifikasi tahap <strong>{selectedItem.stage}</strong>.</span>
+              </div>
+            )}
 
             <div className="space-y-3 mb-6">
               {selectedItem.stage === "Pending" && (

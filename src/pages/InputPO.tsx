@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, doc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
+import { useAuth } from '../context/AuthContext';
 
 export default function InputPO() {
+  const { canCreatePO } = useAuth();
   const [view, setView] = useState<'list' | 'form'>('list');
   const [pos, setPos] = useState<any[]>([]);
 
@@ -54,7 +56,7 @@ export default function InputPO() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!poNumber || !clientName || !deadline || !productName) {
-      alert("Harap lengkapi semua field yang wajib!");
+      setAlertMessage("Harap lengkapi semua field yang wajib!");
       return;
     }
 
@@ -78,7 +80,7 @@ export default function InputPO() {
     try {
       const docId = poNumber.replace(/\//g, '-');
       await setDoc(doc(db, 'purchase_orders', docId), newPO);
-      alert("Purchase Order berhasil disimpan!");
+      setAlertMessage("Purchase Order berhasil disimpan!");
       resetForm();
       setView('list');
     } catch (e) {
@@ -99,16 +101,23 @@ export default function InputPO() {
     setNote("");
   };
 
-  const handleDelete = async (id: string, firestoreId: string, e: React.MouseEvent) => {
+  const [deleteConfirm, setDeleteConfirm] = useState<{id: string, firestoreId: string} | null>(null);
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
+
+  const handleDeleteClick = (id: string, firestoreId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm(`Hapus PO ${id}?`)) {
-      try {
-        await deleteDoc(doc(db, 'purchase_orders', firestoreId));
-        const newPOs = pos.filter(p => p.firestoreId !== firestoreId);
-        setPos(newPOs);
-      } catch (e) {
-        handleFirestoreError(e, OperationType.DELETE, 'purchase_orders');
-      }
+    setDeleteConfirm({ id, firestoreId });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return;
+    try {
+      await deleteDoc(doc(db, 'purchase_orders', deleteConfirm.firestoreId));
+      const newPOs = pos.filter(p => p.firestoreId !== deleteConfirm.firestoreId);
+      setPos(newPOs);
+      setDeleteConfirm(null);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, 'purchase_orders');
     }
   };
 
@@ -124,13 +133,20 @@ export default function InputPO() {
                   Lihat dan kelola Purchase Order yang telah dibuat.
                 </p>
               </div>
-              <button 
-                onClick={() => setView('form')}
-                className="bg-primary hover:bg-primary/90 text-on-primary font-bold py-2.5 px-4 rounded-lg flex items-center transition-colors shadow-sm"
-              >
-                <span className="material-symbols-outlined mr-2">add</span>
-                Tambahkan Purchase Order Baru
-              </button>
+              {canCreatePO && (
+                <button 
+                  onClick={() => {
+                    const currentYear = new Date().getFullYear();
+                    const currentMonth = String(new Date().getMonth() + 1).padStart(2, '0');
+                    setPoNumber(`PO-${currentYear}-${currentMonth}-`);
+                    setView('form');
+                  }}
+                  className="bg-primary hover:bg-primary/90 text-on-primary font-bold py-2.5 px-4 rounded-lg flex items-center transition-colors shadow-sm"
+                >
+                  <span className="material-symbols-outlined mr-2">add</span>
+                  Tambahkan Purchase Order Baru
+                </button>
+              )}
             </header>
 
             <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden shadow-sm">
@@ -173,7 +189,7 @@ export default function InputPO() {
                         </td>
                         <td className="p-4 text-center">
                           <button 
-                            onClick={(e) => handleDelete(po.id, po.firestoreId, e)}
+                            onClick={(e) => handleDeleteClick(po.id, po.firestoreId, e)}
                             className="text-error hover:bg-error-container p-2 rounded-lg transition-colors"
                           >
                             <span className="material-symbols-outlined text-[18px]">delete</span>
@@ -353,6 +369,48 @@ export default function InputPO() {
           </form>
         )}
       </main>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface rounded-xl shadow-lg max-w-md w-full p-6 animate-in fade-in zoom-in duration-200">
+            <h3 className="text-xl font-headline font-bold text-on-surface mb-2">Konfirmasi Hapus</h3>
+            <p className="text-on-surface-variant mb-6 text-sm">
+              Apakah Anda yakin ingin menghapus Purchase Order <span className="font-bold text-on-surface">{deleteConfirm.id}</span>? Tindakan ini tidak dapat dibatalkan.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => setDeleteConfirm(null)}
+                className="px-4 py-2 bg-surface-container hover:bg-surface-container-high text-on-surface font-semibold rounded-lg transition-colors text-sm"
+              >
+                Batal
+              </button>
+              <button 
+                onClick={confirmDelete}
+                className="px-4 py-2 bg-error hover:bg-error/90 text-on-error font-bold rounded-lg transition-colors text-sm"
+              >
+                Hapus PO
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Alert Modal */}
+      {alertMessage && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface rounded-xl shadow-lg max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200 text-center">
+            <span className="material-symbols-outlined text-4xl text-primary mb-3">info</span>
+            <p className="text-on-surface font-semibold mb-6">{alertMessage}</p>
+            <button 
+              onClick={() => setAlertMessage(null)}
+              className="w-full py-2 bg-primary hover:bg-primary/90 text-on-primary font-bold rounded-lg transition-colors text-sm"
+            >
+              Mengerti
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
